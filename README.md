@@ -113,15 +113,18 @@ See `index.ts` for the full public surface.
 
 `generateMap` keeps an `EntropyIndex` bucket map of uncollapsed cell entropies (updated during propagation) so each collapse step does not scan the whole grid. Propagation also memoizes variant-pair compatibility checks for that pass. For rough timings on large trivial maps, run `npm run benchmark` (builds then runs `scripts/benchmark.mjs`).
 
-On my machine I get the following:
+On my a MacBook Pro M2 Max I got the following:
 
-- 32×32 square (1024), trivial tileset: 15.0 ms
-- 64×64 square (4096), trivial tileset: 46.8 ms
-- 128×128 square (16384), trivial tileset: 177.7 ms
-- 256×256 square (65536), trivial tileset: 731.3 ms
-- 512×512 square (262144), trivial tileset: 3082.9 ms 
 
-If you're generating big maps in real-time - for better user experience I suggest passing the newTile callback option - so your client won't have to wait for the entire map to genenrate before proceeding and can get a "stream" of the tiles.
+| size    | type   | count  | simple?         | time      |
+| ------- | ------ | ------ | --------------- | --------- |
+| 32×32   | square | 1024   | trivial tileset | 15.0 ms   |
+| 64×64   | square | 4096   | trivial tileset | 46.8 ms   |
+| 128×128 | square | 16384  | trivial tileset | 177.7 ms  |
+| 256×256 | square | 65536  | trivial tileset | 731.3 ms  |
+| 512×512 | square | 262144 | trivial tileset | 3082.9 ms |
+
+Based on the above - if you're generating big maps (>10K count) in real-time - for better user experience I suggest passing the newTile callback option - so your client won't have to wait for the entire map to genenrate before proceeding and can get a "stream" of the tiles.
 
 ## Limitations and possible extensions
 
