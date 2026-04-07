@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cfwwfc — Square terrain WFC</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+    }
+    body { margin: 0; padding: 1.25rem;  }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.35rem; }
+    p { margin: 0 0 1rem; color: #8b949e; line-height: 1.5; font-size: 0.9rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button:hover { filter: brightness(1.08); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .err { color: #f85149; font-size: 0.85rem; margin-top: 0.5rem; }
+    .map-wrap { overflow: auto; padding: 0.5rem; background: #161b22; border-radius: 0; border: 1px solid #30363d; }
+    .grid {
+      display: grid;
+      gap: 0;
+      width: fit-content;
+      line-height: 0;
+    }
+    .cell {
+      width: 28px;
+      height: 28px;
+      position: relative;
+      box-sizing: border-box;
+      padding: 0;
+      margin: 0;
+    }
+    .cell::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      opacity: 1;
+    }
+    .cell[data-id="grass"]::after { background: #3fb950; }
+    .cell[data-id="water"]::after { background: #58a6ff; }
+    .cell[data-id="sand"]::after { background: #d4a574; }
+    .cell[data-id="stone"]::after { background: #8b949e; }
+    .cell[data-id="wood"]::after { background: #062e0b;}
+    .legend { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; margin-top: 1rem; font-size: 0.8rem; color: #8b949e; }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .swatch { width: 14px; height: 14px; border-radius: 2px; border: 1px solid #30363d; }
+    aside { font-size: 0.75rem; color: #6e7681; margin-top: 1.5rem; }
+    code { background: #21262d; padding: 0.1em 0.35em; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Square terrain</h1>
+  <p>
+    Full <code>generateMap</code> on a square grid with weighted, isotropic terrain tiles.
+    Adjacency is symmetric: each tile only allows neighbors it agrees with (e.g. water meets water or sand).
+    Tooltip shows <code>id</code> and rotation (isotropic tiles look the same at any 90° step).
+  </p>
+  <div class="toolbar">
+    <label>
+      Size
+      <select id="size">
+        <option value="10">10×10</option>
+        <option value="16" selected>16×16</option>
+        <option value="32">32×32</option>
+        <option value="48">48x48</option>
+      </select>
+    </label>
+    <button type="button" id="gen">Generate</button>
+  </div>
+  <div id="error" class="err" hidden></div>
+  <div class="map-wrap">
+    <div id="grid" class="grid" aria-label="Generated map"></div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <aside>
+    Run <code>npm run build</code>, then serve the repo root (e.g. <code>npx serve .</code>) and open
+    <code>/examples/square-terrain/</code> — ES modules need HTTP, not <code>file://</code>.
+  </aside>
+  <script type="module">
+    import generateMap, { SquareTilePositions } from '../../dist/index.js';
+
+    const ADJ = {
+      wood: new Set(['grass', 'stone']),
+      grass: new Set(['grass', 'sand', 'stone', 'wood']),
+      water: new Set(['water', 'sand']),
+      sand: new Set(['grass', 'water', 'sand', 'stone']),
+      stone: new Set(['grass', 'sand', 'stone', 'wood']),
+    };
+
+    function tileDef(id, weight) {
+      const allow = ADJ[id];
+      return {
+        id,
+        weight,
+        tileAllowed(_edge, _self, neighbor) {
+          return allow.has(neighbor.id);
+        },
+        edgeAllowed() {
+          return true;
+        },
+        rotationAllowed() {
+          return true;
+        },
+      };
+    }
+
+    const TILESET = new Map([
+      ['grass', tileDef('grass', 4)],
+      ['water', tileDef('water', 2)],
+      ['sand', tileDef('sand', 1)],
+      ['stone', tileDef('stone', 1)],
+      ['wood', tileDef('wood', 1)],
+    ]);
+
+    const COLORS = {
+      grass: '#3fb950',
+      wood: '#062e0b',
+      water: '#58a6ff',
+      sand: '#d4a574',
+      stone: '#8b949e',
+    };
+
+    const gridEl = document.getElementById('grid');
+    const errEl = document.getElementById('error');
+    const sizeEl = document.getElementById('size');
+
+    function renderLegend() {
+      const leg = document.getElementById('legend');
+      leg.replaceChildren(
+        ...['grass', 'wood', 'water', 'sand', 'stone'].map((id) => {
+          const span = document.createElement('span');
+          const sw = document.createElement('span');
+          sw.className = 'swatch';
+          sw.style.background = COLORS[id];
+          span.append(sw, document.createTextNode(id));
+          return span;
+        })
+      );
+    }
+
+    function drawMap(w, h, tilemap) {
+      gridEl.style.gridTemplateColumns = `repeat(${w}, 28px)`;
+      gridEl.replaceChildren();
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const t = tilemap[x][y];
+          const div = document.createElement('div');
+          div.className = 'cell';
+          div.title = t ? `${t.id} @ ${t.rotation}° (${x},${y})` : 'empty';
+          if (t) div.dataset.id = t.id;
+          gridEl.appendChild(div);
+        }
+      }
+    }
+
+    function run() {
+      errEl.hidden = true;
+      const n = Number(sizeEl.value);
+      try {
+        const map = generateMap(n, n, TILESET, SquareTilePositions);
+        drawMap(n, n, map);
+      } catch (e) {
+        errEl.textContent = e instanceof Error ? e.message : String(e);
+        errEl.hidden = false;
+      }
+    }
+
+    document.getElementById('gen').addEventListener('click', run);
+    renderLegend();
+    run();
+  </script>
+</body>
+</html>

@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cfwwfc — Square terrain with roads & rivers</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+    }
+    body { margin: 0; padding: 1.25rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.35rem; }
+    p { margin: 0 0 1rem; color: #8b949e; line-height: 1.5; font-size: 0.9rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button:hover { filter: brightness(1.08); }
+    .err { color: #f85149; font-size: 0.85rem; margin-top: 0.5rem; }
+    .map-wrap { overflow: auto; padding: 0.5rem; background: #161b22; border: 1px solid #30363d; }
+    .grid {
+      display: grid;
+      gap: 0;
+      width: fit-content;
+      line-height: 0;
+    }
+    .cell {
+      width: 28px;
+      height: 28px;
+      position: relative;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    .cell::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+    }
+    .cell[data-biome="grass"]::after { background: #3fb950; }
+    .cell[data-biome="sand"]::after { background: #d4a574; }
+    .cell[data-biome="water"]::after { background: #58a6ff; }
+    .cell[data-biome="stone"]::after { background: #8b949e; }
+    .cell[data-biome="wood"]::after { background: #062e0b; }
+    /* Unrotated art in .ovl; whole layer rotated by WFC rotation */
+    .ovl {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      transform: rotate(var(--rot, 0deg));
+      transform-origin: 50% 50%;
+    }
+    .feat-road-through {
+      position: absolute;
+      left: 0; right: 0; top: 50%;
+      height: 8px;
+      margin-top: -4px;
+      background: #4a3728;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+    }
+    .feat-river-through {
+      position: absolute;
+      left: 0; right: 0; top: 50%;
+      height: 7px;
+      margin-top: -3.5px;
+      background: #1f6feb;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.2);
+    }
+    .feat-road-cap {
+      position: absolute;
+      left: 0; right: 0; top: 0;
+      height: 8px;
+      background: #4a3728;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+    }
+    .feat-river-cap {
+      position: absolute;
+      left: 0; right: 0; top: 0;
+      height: 7px;
+      background: #1f6feb;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.2);
+    }
+    .feat-road-corner {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(#4a3728, #4a3728) 0 0 / 100% 8px no-repeat,
+        linear-gradient(#4a3728, #4a3728) 100% 0 / 8px 100% no-repeat;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15);
+    }
+    .feat-river-corner {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(#1f6feb, #1f6feb) 0 0 / 100% 7px no-repeat,
+        linear-gradient(#1f6feb, #1f6feb) 100% 0 / 7px 100% no-repeat;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15);
+    }
+    .feat-cross {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(#4a3728, #4a3728) 50% 50% / 100% 8px no-repeat,
+        linear-gradient(#1f6feb, #1f6feb) 50% 50% / 7px 100% no-repeat;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);
+    }
+    .legend { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; margin-top: 1rem; font-size: 0.75rem; color: #8b949e; }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 2px;
+      border: 1px solid #30363d;
+      position: relative;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    aside { font-size: 0.75rem; color: #6e7681; margin-top: 1.5rem; }
+    code { background: #21262d; padding: 0.1em 0.35em; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Square terrain — roads & rivers on grass / sand</h1>
+  <p>
+    Like <code>square-terrain</code>, with <strong>socketed</strong> grass/sand variants: each side is open, road, or river, and neighbors must match on the shared edge.
+    Straights, caps, corners, and road×river crossings are a <strong>single tile id each</strong>; <code>tileAllowed</code> receives <code>self</code> and <code>neighbor</code> (with rotations) plus both <strong>local</strong> edge indices so rules stay correct under rotation.
+  </p>
+  <div class="toolbar">
+    <label>
+      Size
+      <select id="size">
+        <option value="10">10×10</option>
+        <option value="16" selected>16×16</option>
+        <option value="32">32×32</option>
+        <option value="48">48×48</option>
+      </select>
+    </label>
+    <button type="button" id="gen">Generate</button>
+  </div>
+  <div id="error" class="err" hidden></div>
+  <div class="map-wrap">
+    <div id="grid" class="grid" aria-label="Generated map"></div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <aside>
+    Run <code>npm run build</code>, then serve the repo root and open
+    <code>/examples/square-terrain-roads-rivers/</code>.
+  </aside>
+  <script type="module">
+    import generateMap, { SquareTilePositions } from '../../dist/index.js';
+
+    /** Edge sockets clockwise from top: 1 top, 2 right, 3 bottom, 4 left */
+    const NONE = 'o';
+    const ROAD = 'r';
+    const RIV = 'v';
+
+    const ADJ = {
+      wood: new Set(['grass', 'sand', 'stone']),
+      grass: new Set(['grass', 'sand', 'stone', 'wood']),
+      water: new Set(['water', 'sand']),
+      sand: new Set(['grass', 'water', 'sand', 'stone']),
+      stone: new Set(['grass', 'sand', 'stone', 'wood']),
+    };
+
+    /** @type {Record<string, 'grass' | 'sand' | 'water' | 'stone' | 'wood'>} */
+    const CATEGORY = {
+      grass: 'grass',
+      sand: 'sand',
+      water: 'water',
+      stone: 'stone',
+      wood: 'wood',
+      grass_road: 'grass',
+      grass_river: 'grass',
+      grass_road_cap: 'grass',
+      grass_river_cap: 'grass',
+      grass_road_corner: 'grass',
+      grass_river_corner: 'grass',
+      grass_cross: 'grass',
+      sand_road: 'sand',
+      sand_river: 'sand',
+      sand_road_cap: 'sand',
+      sand_river_cap: 'sand',
+      sand_road_corner: 'sand',
+      sand_river_corner: 'sand',
+      sand_cross: 'sand',
+    };
+
+    /** Local-space sockets (sprite at 0°): straights are E–W; rotate via WFC */
+    const SOCKETS = {
+      grass: [NONE, NONE, NONE, NONE],
+      sand: [NONE, NONE, NONE, NONE],
+      water: [NONE, NONE, NONE, NONE],
+      stone: [NONE, NONE, NONE, NONE],
+      wood: [NONE, NONE, NONE, NONE],
+      grass_road: [NONE, ROAD, NONE, ROAD],
+      sand_road: [NONE, ROAD, NONE, ROAD],
+      grass_river: [NONE, RIV, NONE, RIV],
+      sand_river: [NONE, RIV, NONE, RIV],
+      grass_road_cap: [ROAD, NONE, NONE, NONE],
+      sand_road_cap: [ROAD, NONE, NONE, NONE],
+      grass_river_cap: [RIV, NONE, NONE, NONE],
+      sand_river_cap: [RIV, NONE, NONE, NONE],
+      grass_road_corner: [ROAD, ROAD, NONE, NONE],
+      sand_road_corner: [ROAD, ROAD, NONE, NONE],
+      grass_river_corner: [RIV, RIV, NONE, NONE],
+      sand_river_corner: [RIV, RIV, NONE, NONE],
+      grass_cross: [RIV, ROAD, RIV, ROAD],
+      sand_cross: [RIV, ROAD, RIV, ROAD],
+    };
+
+    /** @param {string} id */
+    function categoryOf(id) {
+      const c = CATEGORY[id];
+      if (!c) throw new Error(`Unknown tile id for category: ${id}`);
+      return c;
+    }
+
+    /**
+     * @param {string} id
+     * @returns {[string, string, string, string]}
+     */
+    function socketsFor(id) {
+      const s = SOCKETS[id];
+      if (!s) throw new Error(`Unknown tile id for sockets: ${id}`);
+      return s;
+    }
+
+    function categoriesCompatible(a, b) {
+      return ADJ[categoryOf(a)].has(categoryOf(b));
+    }
+
+    function tileDef(id, weight) {
+      return {
+        id,
+        weight,
+        tileAllowed(localSelf, self, neighbor, localNeighbor) {
+          if (!categoriesCompatible(self.id, neighbor.id)) return false;
+          return socketsFor(self.id)[localSelf - 1] === socketsFor(neighbor.id)[localNeighbor - 1];
+        },
+        edgeAllowed() {
+          return true;
+        },
+        rotationAllowed() {
+          return true;
+        },
+      };
+    }
+
+    const TILESET = new Map([
+      ['grass', tileDef('grass', 5)],
+      ['sand', tileDef('sand', 2)],
+      ['water', tileDef('water', 2)],
+      ['stone', tileDef('stone', 1)],
+      ['wood', tileDef('wood', 1)],
+      ['grass_road', tileDef('grass_road', 0.9)],
+      ['grass_river', tileDef('grass_river', 0.75)],
+      ['grass_road_cap', tileDef('grass_road_cap', 0.45)],
+      ['grass_river_cap', tileDef('grass_river_cap', 0.35)],
+      ['grass_road_corner', tileDef('grass_road_corner', 0.4)],
+      ['grass_river_corner', tileDef('grass_river_corner', 0.3)],
+      ['grass_cross', tileDef('grass_cross', 0.2)],
+      ['sand_road', tileDef('sand_road', 0.65)],
+      ['sand_river', tileDef('sand_river', 0.55)],
+      ['sand_road_cap', tileDef('sand_road_cap', 0.35)],
+      ['sand_river_cap', tileDef('sand_river_cap', 0.28)],
+      ['sand_road_corner', tileDef('sand_road_corner', 0.32)],
+      ['sand_river_corner', tileDef('sand_river_corner', 0.25)],
+      ['sand_cross', tileDef('sand_cross', 0.18)],
+    ]);
+
+    /** @param {string} id @returns {string} */
+    function overlayClassFor(id) {
+      if (id === 'grass_road' || id === 'sand_road') return 'feat-road-through';
+      if (id === 'grass_river' || id === 'sand_river') return 'feat-river-through';
+      if (id === 'grass_road_cap' || id === 'sand_road_cap') return 'feat-road-cap';
+      if (id === 'grass_river_cap' || id === 'sand_river_cap') return 'feat-river-cap';
+      if (id === 'grass_road_corner' || id === 'sand_road_corner') return 'feat-road-corner';
+      if (id === 'grass_river_corner' || id === 'sand_river_corner') return 'feat-river-corner';
+      if (id === 'grass_cross' || id === 'sand_cross') return 'feat-cross';
+      return '';
+    }
+
+    const gridEl = document.getElementById('grid');
+    const errEl = document.getElementById('error');
+    const sizeEl = document.getElementById('size');
+
+    function addLegendSwatch(container, biome, innerClass, rotationDeg) {
+      const sw = document.createElement('span');
+      sw.className = 'swatch';
+      sw.dataset.biome = biome;
+      if (innerClass) {
+        const ovl = document.createElement('div');
+        ovl.className = 'ovl';
+        ovl.style.setProperty('--rot', `${rotationDeg}deg`);
+        const inner = document.createElement('span');
+        inner.className = innerClass;
+        ovl.appendChild(inner);
+        sw.appendChild(ovl);
+      }
+      container.appendChild(sw);
+    }
+
+    function renderLegend() {
+      const leg = document.getElementById('legend');
+      const rows = [
+        { label: 'grass / sand / …', biome: 'grass', cls: '', rot: 0 },
+        { label: 'road (rotate)', biome: 'grass', cls: 'feat-road-through', rot: 0 },
+        { label: 'road cap', biome: 'grass', cls: 'feat-road-cap', rot: 0 },
+        { label: 'road corner', biome: 'grass', cls: 'feat-road-corner', rot: 0 },
+        { label: 'river', biome: 'grass', cls: 'feat-river-through', rot: 90 },
+        { label: 'road × river', biome: 'grass', cls: 'feat-cross', rot: 0 },
+      ];
+      leg.replaceChildren(
+        ...rows.map(({ label, biome, cls, rot }) => {
+          const span = document.createElement('span');
+          addLegendSwatch(span, biome, cls, rot);
+          span.appendChild(document.createTextNode(label));
+          return span;
+        })
+      );
+    }
+
+    function drawMap(w, h, tilemap) {
+      gridEl.style.gridTemplateColumns = `repeat(${w}, 28px)`;
+      gridEl.replaceChildren();
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const t = tilemap[x][y];
+          const div = document.createElement('div');
+          div.className = 'cell';
+          div.title = t ? `${t.id} @ ${t.rotation}° (${x},${y})` : 'empty';
+          if (t) {
+            div.dataset.biome = categoryOf(t.id);
+            const innerCls = overlayClassFor(t.id);
+            if (innerCls) {
+              const ovl = document.createElement('div');
+              ovl.className = 'ovl';
+              ovl.style.setProperty('--rot', `${t.rotation}deg`);
+              const inner = document.createElement('span');
+              inner.className = innerCls;
+              ovl.appendChild(inner);
+              div.appendChild(ovl);
+            }
+          }
+          gridEl.appendChild(div);
+        }
+      }
+    }
+
+    function run() {
+      errEl.hidden = true;
+      const n = Number(sizeEl.value);
+      try {
+        const map = generateMap(n, n, TILESET, SquareTilePositions);
+        drawMap(n, n, map);
+      } catch (e) {
+        errEl.textContent = e instanceof Error ? e.message : String(e);
+        errEl.hidden = false;
+      }
+    }
+
+    document.getElementById('gen').addEventListener('click', run);
+    renderLegend();
+    run();
+  </script>
+</body>
+</html>

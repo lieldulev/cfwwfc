@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cfwwfc — Hex grid biomes</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+    }
+    body { margin: 0; padding: 1.25rem; max-width: 56rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.35rem; }
+    p { margin: 0 0 1rem; color: #8b949e; line-height: 1.5; font-size: 0.9rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button:hover { filter: brightness(1.08); }
+    .err { color: #f85149; font-size: 0.85rem; margin-top: 0.5rem; }
+    .svg-wrap {
+      overflow: auto;
+      background: #161b22;
+      border-radius: 8px;
+      border: 1px solid #30363d;
+      padding: 0.75rem;
+    }
+    svg { display: block; }
+    .hex { stroke: #21262d; stroke-width: 0.06; transition: filter 0.12s; }
+    .hex:hover { filter: brightness(1.12); }
+    .legend { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; margin-top: 1rem; font-size: 0.8rem; color: #8b949e; }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .swatch { width: 14px; height: 14px; border-radius: 2px; border: 1px solid #30363d; }
+    aside { font-size: 0.75rem; color: #6e7681; margin-top: 1.5rem; }
+    code { background: #21262d; padding: 0.1em 0.35em; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Hex biomes</h1>
+  <p>
+    Same API with <code>HexagonTilePositions</code> (axial <code>(x,y)</code> stored in the map matrix).
+    Each cell is drawn as a <strong>pointy-top</strong> hex; fill color is the collapsed tile id. Six neighbors per cell match the library’s clockwise edge order.
+  </p>
+  <div class="toolbar">
+    <label>
+      Grid
+      <select id="dims">
+        <option value="6">6×6</option>
+        <option value="9" selected>9×9</option>
+        <option value="12">12×12</option>
+      </select>
+    </label>
+    <button type="button" id="gen">Generate</button>
+  </div>
+  <div id="error" class="err" hidden></div>
+  <div class="svg-wrap"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  <div class="legend" id="legend"></div>
+  <aside>
+    Run <code>npm run build</code>, serve repo root, open <code>/examples/hex-biomes/</code>.
+  </aside>
+  <script type="module">
+    import generateMap, { HexagonTilePositions } from '../../dist/index.js';
+
+    const ADJ = {
+      deep: new Set(['deep', 'coast']),
+      coast: new Set(['deep', 'coast', 'land']),
+      land: new Set(['coast', 'land', 'hill']),
+      hill: new Set(['land', 'hill']),
+    };
+
+    function tileDef(id, weight) {
+      const allow = ADJ[id];
+      return {
+        id,
+        weight,
+        tileAllowed(_e, _self, neighbor) {
+          return allow.has(neighbor.id);
+        },
+        edgeAllowed() {
+          return true;
+        },
+        rotationAllowed() {
+          return true;
+        },
+      };
+    }
+
+    const TILESET = new Map([
+      ['deep', tileDef('deep', 2)],
+      ['coast', tileDef('coast', 3)],
+      ['land', tileDef('land', 5)],
+      ['hill', tileDef('hill', 1)],
+    ]);
+
+    const COLORS = {
+      deep: '#0d419d',
+      coast: '#4493f8',
+      land: '#3fb950',
+      hill: '#7d8590',
+    };
+
+    /** Pointy-top hex corners, center (0,0), circumradius 1 */
+    function hexPath(cx, cy, R) {
+      const pts = [];
+      for (let i = 0; i < 6; i++) {
+        const a = (-Math.PI / 2) + (i * Math.PI) / 3;
+        pts.push([cx + R * Math.cos(a), cy + R * Math.sin(a)]);
+      }
+      return (
+        pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p[0].toFixed(3)} ${p[1].toFixed(3)}`).join(' ') + ' Z'
+      );
+    }
+
+    /** Axial (q,r) as in library → pixel center. Pointy-top, “odd-r” style stagger via sqrt3 layout */
+    function axialToPixel(x, y, R) {
+      const px = R * Math.sqrt(3) * (x + y / 2);
+      const py = R * (3 / 2) * y;
+      return [px, py];
+    }
+
+    function drawHexMap(w, h, tilemap) {
+      const svg = document.getElementById('svg');
+      const R = 1.15;
+      let maxX = 0;
+      let maxY = 0;
+      const pad = 1.2;
+      const frag = document.createDocumentFragment();
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const t = tilemap[x][y];
+          const [cx, cy] = axialToPixel(x, y, R);
+          maxX = Math.max(maxX, cx + R * 1.1);
+          maxY = Math.max(maxY, cy + R * 1.1);
+
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          path.setAttribute('d', hexPath(cx, cy, R));
+          path.setAttribute('fill', t ? COLORS[t.id] ?? '#333' : '#222');
+          path.setAttribute('class', 'hex');
+          path.setAttribute(
+            'title',
+            t ? `${t.id} ${t.rotation}° @ (${x},${y})` : `empty (${x},${y})`
+          );
+          frag.appendChild(path);
+
+          /* Rotation tick: small wedge to show 60° steps matter for asymmetric rules (here mostly aesthetic) */
+          if (t && t.rotation !== 0) {
+            const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            dot.setAttribute('cx', String(cx + R * 0.45 * Math.cos((t.rotation * Math.PI) / 180)));
+            dot.setAttribute('cy', String(cy + R * 0.45 * Math.sin((t.rotation * Math.PI) / 180)));
+            dot.setAttribute('r', '0.18');
+            dot.setAttribute('fill', 'rgba(0,0,0,0.35)');
+            frag.appendChild(dot);
+          }
+        }
+      }
+
+      svg.replaceChildren(frag);
+      const vbW = maxX + pad * 2;
+      const vbH = maxY + pad * 2;
+      svg.setAttribute('viewBox', `${-pad} ${-pad - R * 0.3} ${vbW} ${vbH}`);
+      svg.style.width = `${Math.min(720, vbW * 28)}px`;
+      svg.style.height = 'auto';
+    }
+
+    function renderLegend() {
+      const leg = document.getElementById('legend');
+      leg.replaceChildren(
+        ...['deep', 'coast', 'land', 'hill'].map((id) => {
+          const span = document.createElement('span');
+          const sw = document.createElement('span');
+          sw.className = 'swatch';
+          sw.style.background = COLORS[id];
+          span.append(sw, document.createTextNode(id));
+          return span;
+        })
+      );
+    }
+
+    const errEl = document.getElementById('error');
+    const dimsEl = document.getElementById('dims');
+
+    function run() {
+      errEl.hidden = true;
+      const n = Number(dimsEl.value);
+      try {
+        const map = generateMap(n, n, TILESET, HexagonTilePositions);
+        drawHexMap(n, n, map);
+      } catch (e) {
+        errEl.textContent = e instanceof Error ? e.message : String(e);
+        errEl.hidden = false;
+      }
+    }
+
+    document.getElementById('gen').addEventListener('click', run);
+    renderLegend();
+    run();
+  </script>
+</body>
+</html>

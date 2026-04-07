@@ -2,14 +2,19 @@
     "name": "cfwwfc",
     "version": "1.0.0",
     "description": "Cookie's Flexible Weighted Wave Function Collapse",
+    "type": "module",
     "main": "dist/index.js",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "build": "tsc",
+        "test": "vitest run",
+        "benchmark": "npm run build && node scripts/benchmark.mjs"
     },
     "keywords": [],
     "author": "lieldulev",
-    "license": "ISC",
+    "license": "MIT",
     "devDependencies": {
-        "typescript": "^5.9.3"
+        "@types/node": "^22.10.0",
+        "typescript": "^5.9.3",
+        "vitest": "^3.0.5"
     }
 }

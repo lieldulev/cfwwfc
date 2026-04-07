@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cfwwfc — Propagation &amp; entropy</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+    }
+    body { margin: 0; padding: 1.25rem; max-width: 48rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.35rem; }
+    p { margin: 0 0 1rem; color: #8b949e; line-height: 1.5; font-size: 0.9rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button.secondary { background: #1f6feb; }
+    button:hover { filter: brightness(1.08); }
+    .stats { font-size: 0.8rem; color: #8b949e; margin-bottom: 0.75rem; }
+    .map-wrap { overflow: auto; padding: 0.5rem; background: #161b22; border-radius: 8px; border: 1px solid #30363d; }
+    .grid { display: grid; gap: 3px; width: fit-content; }
+    .cell {
+      width: 36px;
+      height: 36px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      font-variant-numeric: tabular-nums;
+      color: rgba(255,255,255,0.92);
+      text-shadow: 0 0 3px #000;
+      border: 1px solid rgba(0,0,0,0.4);
+      box-sizing: border-box;
+    }
+    .cell.collapsed { font-weight: 700; font-size: 0.75rem; }
+    aside { font-size: 0.75rem; color: #6e7681; margin-top: 1.25rem; }
+    code { background: #21262d; padding: 0.1em 0.35em; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Propagation &amp; entropy</h1>
+  <p>
+    <code>initializeWfcMaps</code> with a <strong>seed</strong>, then
+    <code>propagateAllCollapsed</code> to shrink superpositions without the full WFC loop.
+    Cell color = remaining variant count (entropy); collapsed cells show <code>A</code>, <code>B</code>, or <code>C</code>.
+  </p>
+  <div class="toolbar">
+    <button type="button" id="reset">Reset (seed only)</button>
+    <button type="button" class="secondary" id="prop">Run propagation</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="map-wrap">
+    <div id="grid" class="grid" aria-label="Entropy map"></div>
+  </div>
+  <aside>
+    <code>A</code> may neighbor <code>A</code> or <code>C</code>; <code>B</code> may neighbor <code>B</code> or <code>C</code>; <code>C</code> is a shared edge type and may neighbor any of the three (think grass / water / shore).
+    The center is seeded <code>A</code>, so propagation removes pure <code>B</code> next to <code>A</code> and leaves mixed superpositions where both biomes could still reach.
+    Serve repo root after <code>npm run build</code>; open <code>/examples/propagation-entropy/</code>.
+  </aside>
+  <script type="module">
+    import {
+      SquareTilePositions,
+      initializeWfcMaps,
+      propagateAllCollapsed,
+      getOptionCount,
+    } from '../../dist/index.js';
+
+    const W = 9;
+    const H = 9;
+
+    /** Symmetric adjacency: A and B never touch directly; C interfaces both. */
+    const ADJ = {
+      A: new Set(['A', 'C']),
+      B: new Set(['B', 'C']),
+      C: new Set(['A', 'B', 'C']),
+    };
+
+    function tile(id, weight) {
+      const allow = ADJ[id];
+      return {
+        id,
+        weight,
+        tileAllowed(_e, _self, neighbor) {
+          return allow.has(neighbor.id);
+        },
+        edgeAllowed() {
+          return true;
+        },
+        rotationAllowed(r) {
+          return r === 0;
+        },
+      };
+    }
+
+    const TILESET = new Map([
+      ['A', tile('A', 3)],
+      ['B', tile('B', 3)],
+      ['C', tile('C', 3)],
+    ]);
+
+    const COLLAPSED_BG = { A: '#238636', B: '#4957e5', C: '#d29922' };
+
+    let tilemap;
+    let superposition;
+
+    function makeSeed() {
+      const seed = Array.from({ length: W }, () => Array.from({ length: H }, () => undefined));
+      seed[4][4] = { id: 'A', rotation: 0 };
+      seed[4][5] = { id: 'A', rotation: 0 };
+      seed[4][6] = { id: 'A', rotation: 0 };
+      seed[1][2] = { id: 'B', rotation: 0 };
+      seed[5][7] = { id: 'A', rotation: 0 };
+      seed[4][7] = { id: 'A', rotation: 0 };
+      seed[5][8] = { id: 'A', rotation: 0 };
+      seed[7][7] = { id: 'B', rotation: 0 };
+      seed[6][5] = { id: 'B', rotation: 0 };
+      seed[6][4] = { id: 'B', rotation: 0 };
+      return seed;
+    }
+
+    function resetState() {
+      const init = initializeWfcMaps(W, H, TILESET, SquareTilePositions, makeSeed());
+      tilemap = init.tilemap;
+      superposition = init.superposition;
+    }
+
+    const maxVariants = 3; /* A0, B0, C0 */
+
+    function entropyColor(n) {
+      if (n <= 0) return '#f85149';
+      const t = (n - 1) / (maxVariants);
+      const r = Math.round(20 + 180 * (1 - t));
+      const g = Math.round(20 + 180 * (1 - t));
+      const b = Math.round(20 + 180 * (1 - t));
+      return `rgb(${r},${g},${b})`;
+    }
+
+    const gridEl = document.getElementById('grid');
+    const statsEl = document.getElementById('stats');
+
+    function updateStats() {
+      let minE = Infinity;
+      let maxE = 0;
+      let sum = 0;
+      let unc = 0;
+      for (let x = 0; x < W; x++) {
+        for (let y = 0; y < H; y++) {
+          if (tilemap[x][y] !== undefined) continue;
+          const n = getOptionCount(superposition, x, y);
+          unc++;
+          sum += n;
+          minE = Math.min(minE, n);
+          maxE = Math.max(maxE, n);
+        }
+      }
+      statsEl.textContent =
+        unc === 0
+          ? 'All cells collapsed.'
+          : `Uncollapsed: ${unc} — entropy min ${minE === Infinity ? '—' : minE}, max ${maxE}, avg ${(sum / unc).toFixed(2)}`;
+    }
+
+    function draw() {
+      gridEl.style.gridTemplateColumns = `repeat(${H}, 36px)`;
+      gridEl.replaceChildren();
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const div = document.createElement('div');
+          div.className = 'cell';
+          const t = tilemap[x][y];
+          if (t) {
+            div.classList.add('collapsed');
+            div.textContent = t.id;
+            div.style.background = COLLAPSED_BG[t.id] ?? '#30363d';
+            div.title = `Collapsed ${t.id} @ (${x},${y})`;
+          } else {
+            const n = getOptionCount(superposition, x, y);
+            div.textContent = String(n);
+            div.style.background = entropyColor(Math.max(1, n));
+            div.title = `${n} variant(s) @ (${x},${y})`;
+          }
+          gridEl.appendChild(div);
+        }
+      }
+      updateStats();
+    }
+
+    document.getElementById('reset').addEventListener('click', () => {
+      resetState();
+      draw();
+    });
+
+    document.getElementById('prop').addEventListener('click', () => {
+      propagateAllCollapsed(W, H, SquareTilePositions, TILESET, tilemap, superposition);
+      draw();
+    });
+
+    resetState();
+    draw();
+  </script>
+</body>
+</html>
